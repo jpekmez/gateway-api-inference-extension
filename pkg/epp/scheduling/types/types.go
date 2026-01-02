@@ -58,6 +58,10 @@ type LLMRequestBody struct {
 	Completions *CompletionsRequest `json:"completions,omitempty"`
 	// ChatCompletionsRequest is the representation of the OpenAI /v1/chat/completions request body.
 	ChatCompletions *ChatCompletionsRequest `json:"chat_completions,omitempty"`
+
+	// COHERE
+	// RawBody contains the raw request body if it could not be parsed into
+	RawBody map[string]any `json:"raw_body,omitempty"`
 }
 
 func (r *LLMRequestBody) CacheSalt() string {

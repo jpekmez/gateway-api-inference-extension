@@ -112,6 +112,15 @@ type Request struct {
 type Response struct {
 	Headers map[string]string
 }
+
+// COHERE
+// isNonStandardRequest returns true if the request is not a standard chat/completions request.
+// Non-standard requests (e.g., embeddings, rerank) are identified by having RawBody populated
+// instead of ChatCompletions or Completions.
+func (r *RequestContext) isNonStandardRequest() bool {
+	return r.SchedulingRequest != nil && r.SchedulingRequest.Body.RawBody != nil
+}
+
 type StreamRequestState int
 
 const (
@@ -300,6 +309,37 @@ func (s *StreamingServer) Process(srv extProcPb.ExternalProcessor_ProcessServer)
 				// Message is buffered, we can read and decode.
 				if v.ResponseBody.EndOfStream {
 					loggerTrace.Info("stream completed")
+
+					// COHERE
+					// Handle non-standard requests (embed, rerank) that don't follow OpenAI response format.
+					if reqCtx.isNonStandardRequest() {
+						reqCtx.ResponseSize = len(body)
+						reqCtx.ResponseComplete = true
+						reqCtx.ResponseCompleteTimestamp = time.Now()
+
+						// Generate response body to send back to client
+						reqCtx.respBodyResp = generateResponseBodyResponses(body, true)
+
+						// Notify director that response processing is complete
+						var completeErr error
+						reqCtx, completeErr = s.director.HandleResponseBodyComplete(ctx, reqCtx)
+						if completeErr != nil {
+							if logger.V(logutil.DEBUG).Enabled() {
+								logger.V(logutil.DEBUG).Error(completeErr, "Error in HandleResponseBodyComplete for non-standard request", "request", req)
+							} else {
+								logger.V(logutil.DEFAULT).Error(completeErr, "Error in HandleResponseBodyComplete for non-standard request")
+							}
+							// Don't propagate this error - we still want to send the response back to client
+						}
+
+						// Record metrics for non-standard requests
+						metrics.RecordRequestLatencies(ctx, reqCtx.IncomingModelName, reqCtx.TargetModelName, reqCtx.RequestReceivedTimestamp, reqCtx.ResponseCompleteTimestamp)
+						metrics.RecordResponseSizes(reqCtx.IncomingModelName, reqCtx.TargetModelName, reqCtx.ResponseSize)
+
+						// Break out of switch to continue to updateStateAndSendIfNeeded which will send the response
+						break
+					}
+
 					// Don't send a 500 on a response error. Just let the message passthrough and log our error for debugging purposes.
 					// We assume the body is valid JSON, err messages are not guaranteed to be json, and so capturing and sending a 500 obfuscates the response message.
 					// Using the standard 'err' var will send an immediate error response back to the caller.

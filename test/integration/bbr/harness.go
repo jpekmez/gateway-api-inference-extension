@@ -53,7 +53,7 @@ func NewBBRHarness(t *testing.T, ctx context.Context, streaming bool) *BBRHarnes
 
 	// 2. Configure BBR Server
 	// BBR is simpler than EPP; it doesn't need a K8s Manager.
-	runner := runserver.NewDefaultExtProcServerRunner(port, false)
+	runner := runserver.NewDefaultExtProcServerRunner(port, false, false)
 	runner.SecureServing = false
 	runner.Streaming = streaming
 	runner.Datastore = datastore.NewDatastore()
