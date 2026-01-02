@@ -43,10 +43,10 @@ type ExtProcServerRunner struct {
 	Streaming     bool
 }
 
-func NewDefaultExtProcServerRunner(port int, streaming bool) *ExtProcServerRunner {
+func NewDefaultExtProcServerRunner(port int, streaming bool, secureServing bool) *ExtProcServerRunner {
 	return &ExtProcServerRunner{
 		GrpcPort:      port,
-		SecureServing: true,
+		SecureServing: secureServing,
 		Streaming:     streaming,
 	}
 	// Dependencies can be assigned later.

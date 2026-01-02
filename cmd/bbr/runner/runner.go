@@ -20,11 +20,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 
 	uberzap "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	healthPb "google.golang.org/grpc/health/grpc_health_v1"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -43,6 +45,10 @@ var (
 	metricsPort    = flag.Int("metrics-port", 9090, "The metrics port")
 	streaming      = flag.Bool("streaming", false, "Enables streaming support for Envoy full-duplex streaming mode")
 	logVerbosity   = flag.Int("v", logging.DEFAULT, "number for the log level verbosity")
+
+	// COHERE
+	metricsEndpointAuth = flag.Bool("metrics-endpoint-auth", true, "Enables authentication and authorization of the metrics endpoint")
+	secureServing       = flag.Bool("secure-serving", true, "Enables secure serving.")
 
 	setupLog = ctrl.Log.WithName("setup")
 )
@@ -93,8 +99,14 @@ func (r *Runner) Run(ctx context.Context) error {
 	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.1/pkg/metrics/server
 	// - https://book.kubebuilder.io/reference/metrics.html
 	metricsServerOptions := metricsserver.Options{
-		BindAddress:    fmt.Sprintf(":%d", *metricsPort),
-		FilterProvider: filters.WithAuthenticationAndAuthorization,
+		BindAddress: fmt.Sprintf(":%d", *metricsPort),
+		FilterProvider: func() func(c *rest.Config, httpClient *http.Client) (metricsserver.Filter, error) {
+			if *metricsEndpointAuth {
+				return filters.WithAuthenticationAndAuthorization
+			}
+
+			return nil
+		}(),
 	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Metrics: metricsServerOptions})
 	if err != nil {
@@ -103,7 +115,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Setup runner.
-	serverRunner := runserver.NewDefaultExtProcServerRunner(*grpcPort, *streaming)
+	serverRunner := runserver.NewDefaultExtProcServerRunner(*grpcPort, *streaming, *secureServing)
 
 	// Register health server.
 	if err := registerHealthServer(mgr, *grpcHealthPort); err != nil {

@@ -37,17 +37,17 @@ func ExtractRequestBody(rawBody map[string]any) (*types.LLMRequestBody, error) {
 		return &types.LLMRequestBody{Completions: &completions}, nil
 	}
 
+	// COHERE
 	// Try chat completions
 	var chatCompletions types.ChatCompletionsRequest
-	if err = json.Unmarshal(jsonBytes, &chatCompletions); err != nil {
-		return nil, errutil.Error{Code: errutil.BadRequest, Msg: "invalid request format"}
+	if err = json.Unmarshal(jsonBytes, &chatCompletions); err == nil && len(chatCompletions.Messages) > 0 {
+		if err = validateChatCompletionsMessages(chatCompletions.Messages); err != nil {
+			return nil, errutil.Error{Code: errutil.BadRequest, Msg: "invalid chat-completions request: " + err.Error()}
+		}
+		return &types.LLMRequestBody{ChatCompletions: &chatCompletions}, nil
 	}
 
-	if err = validateChatCompletionsMessages(chatCompletions.Messages); err != nil {
-		return nil, errutil.Error{Code: errutil.BadRequest, Msg: "invalid chat-completions request: " + err.Error()}
-	}
-
-	return &types.LLMRequestBody{ChatCompletions: &chatCompletions}, nil
+	return &types.LLMRequestBody{RawBody: rawBody}, nil
 }
 
 func validateChatCompletionsMessages(messages []types.Message) error {

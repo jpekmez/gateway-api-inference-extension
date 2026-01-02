@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -275,6 +276,8 @@ func (ds *datastore) PodUpdateOrAddIfNotExist(pod *corev1.Pod) bool {
 		if metricsPort == 0 {
 			metricsPort = port
 		}
+		// COHERE
+		address := resolveMultiClusterAddress(context.Background(), pod)
 		pods = append(pods,
 			&datalayer.EndpointMetadata{
 				NamespacedName: types.NamespacedName{
@@ -282,9 +285,9 @@ func (ds *datastore) PodUpdateOrAddIfNotExist(pod *corev1.Pod) bool {
 					Namespace: pod.Namespace,
 				},
 				PodName:     pod.Name,
-				Address:     pod.Status.PodIP,
+				Address:     address,
 				Port:        strconv.Itoa(port),
-				MetricsHost: net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(metricsPort)),
+				MetricsHost: net.JoinHostPort(address, strconv.Itoa(metricsPort)),
 				Labels:      labels,
 			})
 	}
@@ -335,7 +338,9 @@ func (ds *datastore) podResyncAll(ctx context.Context, reader client.Reader) err
 		namespacedName := types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}
 		activePods.Insert(pod.Name)
 		if !ds.PodUpdateOrAddIfNotExist(&pod) {
-			logger.V(logutil.DEFAULT).Info("Pod added", "name", namespacedName)
+			// COHERE
+			address := resolveMultiClusterAddress(ctx, &pod)
+			logger.V(logutil.DEFAULT).Info("Pod added", "name", namespacedName, "address", address)
 		} else {
 			logger.V(logutil.DEFAULT).Info("Pod already exists", "name", namespacedName)
 		}
@@ -360,4 +365,32 @@ func WithEndpointPool(pool *datalayer.EndpointPool) DatastoreOption {
 	return func(d *datastore) {
 		d.pool = pool
 	}
+}
+
+// COHERE
+const admiralty = "admiralty"
+
+// getClusterNameFromNodeName extracts the cluster name from the given node name.
+// Assumes the node name is in the format "admiralty-<cluster-name>-<unique-suffix>".
+func getClusterNameFromNodeName(nodeName string) string {
+	return nodeName[len(admiralty)+1 : strings.LastIndex(nodeName, "-")]
+}
+
+// resolveMultiClusterAddress resolves the multi-cluster address for the given pod.
+func resolveMultiClusterAddress(ctx context.Context, pod *corev1.Pod) string {
+	if strings.HasPrefix(pod.Spec.NodeName, admiralty) {
+		clusterName := getClusterNameFromNodeName(pod.Spec.NodeName)
+		address := fmt.Sprintf("%s-%s.%s.svc.cluster.local", pod.Name, clusterName, pod.Namespace)
+		ip, error := net.DefaultResolver.LookupHost(ctx, address)
+		if error != nil {
+			log.Log.Error(error, "Failed to resolve multi-cluster address", "address", address)
+			return pod.Status.PodIP
+		}
+		if len(ip) == 0 {
+			log.Log.Error(fmt.Errorf("no IPs found"), "No IPs found for multi-cluster address", "address", address)
+			return pod.Status.PodIP
+		}
+		return ip[0]
+	}
+	return pod.Status.PodIP
 }
