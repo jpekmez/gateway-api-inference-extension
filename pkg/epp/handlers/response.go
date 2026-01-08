@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	configPb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -103,6 +104,13 @@ func (s *StreamingServer) HandleResponseBodyModelStreaming(ctx context.Context, 
 func (s *StreamingServer) HandleResponseHeaders(ctx context.Context, reqCtx *RequestContext, resp *extProcPb.ProcessingRequest_ResponseHeaders) (*RequestContext, error) {
 	for _, header := range resp.ResponseHeaders.Headers.Headers {
 		reqCtx.Response.Headers[header.Key] = request.GetHeaderValue(header)
+	}
+
+	// Calculate intermediate latency (time to first response byte)
+	if !reqCtx.RequestReceivedTimestamp.IsZero() {
+		latencyMs := time.Since(reqCtx.RequestReceivedTimestamp).Milliseconds()
+		// Store in response headers for the client
+		reqCtx.Response.Headers["x-epp-latency-ms"] = fmt.Sprintf("%d", latencyMs)
 	}
 
 	reqCtx, err := s.director.HandleResponseReceived(ctx, reqCtx)

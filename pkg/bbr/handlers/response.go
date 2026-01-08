@@ -17,15 +17,25 @@ limitations under the License.
 package handlers
 
 import (
+	"fmt"
+	"time"
+
+	basepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	eppb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
 
 // HandleResponseHeaders handles response headers.
-func (s *Server) HandleResponseHeaders(headers *eppb.HttpHeaders) ([]*eppb.ProcessingResponse, error) {
+func (s *Server) HandleResponseHeaders(headers *eppb.HttpHeaders, reqCtx *RequestContext) ([]*eppb.ProcessingResponse, error) {
 	return []*eppb.ProcessingResponse{
 		{
 			Response: &eppb.ProcessingResponse_ResponseHeaders{
-				ResponseHeaders: &eppb.HeadersResponse{},
+				ResponseHeaders: &eppb.HeadersResponse{
+					Response: &eppb.CommonResponse{
+						HeaderMutation: &eppb.HeaderMutation{
+							SetHeaders: s.generateResponseHeaders(reqCtx),
+						},
+					},
+				},
 			},
 		},
 	}, nil
@@ -51,4 +61,21 @@ func (s *Server) HandleResponseTrailers(trailers *eppb.HttpTrailers) ([]*eppb.Pr
 			},
 		},
 	}, nil
+}
+
+func (s *Server) generateResponseHeaders(reqCtx *RequestContext) []*basepb.HeaderValueOption {
+	headers := []*basepb.HeaderValueOption{}
+
+	// Calculate and add latency if request timestamp is available
+	if reqCtx != nil && !reqCtx.RequestReceivedTimestamp.IsZero() {
+		latencyMs := time.Since(reqCtx.RequestReceivedTimestamp).Milliseconds()
+		headers = append(headers, &basepb.HeaderValueOption{
+			Header: &basepb.HeaderValue{
+				Key:      "x-bbr-latency-ms",
+				RawValue: []byte(fmt.Sprintf("%d", latencyMs)),
+			},
+		})
+	}
+
+	return headers
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/go-logr/logr"
@@ -41,6 +42,11 @@ type Server struct {
 	streaming bool
 }
 
+// RequestContext tracks request lifecycle information for BBR.
+type RequestContext struct {
+	RequestReceivedTimestamp time.Time
+}
+
 func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) error {
 	ctx := srv.Context()
 	logger := log.FromContext(ctx)
@@ -48,6 +54,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) error {
 	loggerVerbose.Info("Processing")
 
 	streamedBody := &streamedBody{}
+	reqCtx := &RequestContext{}
 
 	for {
 		select {
@@ -68,6 +75,10 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) error {
 		var err error
 		switch v := req.Request.(type) {
 		case *extProcPb.ProcessingRequest_RequestHeaders:
+			// Mark when the request was received
+			if reqCtx.RequestReceivedTimestamp.IsZero() {
+				reqCtx.RequestReceivedTimestamp = time.Now()
+			}
 			if s.streaming && !req.GetRequestHeaders().GetEndOfStream() {
 				// If streaming and the body is not empty, then headers are handled when processing request body.
 				loggerVerbose.Info("Received headers, passing off header processing until body arrives...")
@@ -80,6 +91,10 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) error {
 				responses, err = s.HandleRequestHeaders(req.GetRequestHeaders())
 			}
 		case *extProcPb.ProcessingRequest_RequestBody:
+			// Mark when the request was received if not already set
+			if reqCtx.RequestReceivedTimestamp.IsZero() {
+				reqCtx.RequestReceivedTimestamp = time.Now()
+			}
 			if logger.V(logutil.DEBUG).Enabled() {
 				logger.V(logutil.DEBUG).Info("Incoming body chunk", "body", string(v.RequestBody.Body), "EoS", v.RequestBody.EndOfStream)
 			} else {
@@ -89,7 +104,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) error {
 		case *extProcPb.ProcessingRequest_RequestTrailers:
 			responses, err = s.HandleRequestTrailers(req.GetRequestTrailers())
 		case *extProcPb.ProcessingRequest_ResponseHeaders:
-			responses, err = s.HandleResponseHeaders(req.GetResponseHeaders())
+			responses, err = s.HandleResponseHeaders(req.GetResponseHeaders(), reqCtx)
 		case *extProcPb.ProcessingRequest_ResponseBody:
 			responses, err = s.HandleResponseBody(req.GetResponseBody())
 		default:
